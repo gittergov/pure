@@ -1,0 +1,302 @@
+---
+# Advanced Oracle Database Refresh Playbook with Dynamic Volume Discovery
+# This version automatically discovers volumes and handles various naming conventions
+
+- name: Oracle Database Refresh with Dynamic Volume Discovery
+  hosts: oracle2  # Clone database host
+  become: yes
+  become_user: oracle
+  
+  vars:
+    # Basic configuration
+    oracle_home: /u01/app/oracle/product/19.0.0/dbhome_1
+    grid_home: /u01/app/19.0.0/grid
+    oracle_sid: orcl
+    source_host: oracle1
+    clone_host: oracle2
+    
+    # Pure Storage configuration
+    flasharray_host: flasharray1
+    flasharray_user: pureuser
+    flasharray_password: pureuser
+    protection_group: Oracle1-PG
+    
+    # Volume mapping strategy (choose one)
+    mapping_strategy: "auto"  # Options: auto, pattern, custom
+    
+    # For pattern-based mapping
+    volume_mapping_rules:
+      - search: "oracle1"
+        replace: "oracle2"
+      - search: "{{ source_host }}"
+        replace: "{{ clone_host }}"
+      - search: "prod"
+        replace: "dev"
+    
+  tasks:
+    # Step 1: Discover source environment
+    - name: Connect to FlashArray and gather information
+      purestorage.flasharray.purefa_info:
+        gather_subset:
+          - all
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      register: array_info
+      delegate_to: localhost
+      
+    - name: Discover volumes in protection group
+      set_fact:
+        discovered_source_volumes: "{{ array_info.purefa_info.pgroups[protection_group].volumes | default([]) }}"
+        
+    - name: Fail if protection group is empty
+      fail:
+        msg: "No volumes found in protection group {{ protection_group }}"
+      when: discovered_source_volumes | length == 0
+      
+    - name: Display discovered source volumes
+      debug:
+        msg: 
+          - "Protection Group: {{ protection_group }}"
+          - "Discovered {{ discovered_source_volumes | length }} volumes:"
+          - "{{ discovered_source_volumes }}"
+          
+    # Step 2: Intelligent volume mapping
+    - name: Discover all volumes on the array
+      set_fact:
+        all_volumes: "{{ array_info.purefa_info.volumes.keys() | list }}"
+        
+    - name: Find potential target volumes based on naming patterns
+      set_fact:
+        potential_targets: >-
+          {% set targets = {} %}
+          {% for source_vol in discovered_source_volumes %}
+            {% set possible_targets = [] %}
+            {% for vol in all_volumes %}
+              {% if vol != source_vol %}
+                {# Check if volume could be a target based on various patterns #}
+                {% for rule in volume_mapping_rules %}
+                  {% if rule.search in source_vol and rule.replace in vol %}
+                    {% set source_pattern = source_vol | replace(rule.search, 'PLACEHOLDER') %}
+                    {% set target_pattern = vol | replace(rule.replace, 'PLACEHOLDER') %}
+                    {% if source_pattern == target_pattern %}
+                      {% set _ = possible_targets.append(vol) %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+            {% if possible_targets | length > 0 %}
+              {% set _ = targets.update({source_vol: possible_targets[0]}) %}
+            {% endif %}
+          {% endfor %}
+          {{ targets }}
+          
+    - name: Generate automatic volume mappings
+      set_fact:
+        auto_volume_mappings: >-
+          {% set mappings = [] %}
+          {% for source_vol in discovered_source_volumes %}
+            {% if source_vol in potential_targets %}
+              {% set _ = mappings.append({'source': source_vol, 'target': potential_targets[source_vol]}) %}
+            {% else %}
+              {# Fallback: try simple pattern replacement #}
+              {% set target_vol = source_vol %}
+              {% for rule in volume_mapping_rules %}
+                {% if rule.search in target_vol %}
+                  {% set target_vol = target_vol | replace(rule.search, rule.replace) %}
+                  {% break %}
+                {% endif %}
+              {% endfor %}
+              {% set _ = mappings.append({'source': source_vol, 'target': target_vol, 'needs_creation': target_vol not in all_volumes}) %}
+            {% endif %}
+          {% endfor %}
+          {{ mappings }}
+          
+    - name: Display proposed volume mappings
+      debug:
+        msg: "{{ item.source }} -> {{ item.target }}{{ ' (needs creation)' if item.needs_creation | default(false) else '' }}"
+      loop: "{{ auto_volume_mappings }}"
+      
+    - name: Prompt for confirmation if volumes need creation
+      pause:
+        prompt: "Some target volumes don't exist. Continue? (yes/no)"
+      register: user_confirmation
+      when: auto_volume_mappings | selectattr('needs_creation', 'defined') | selectattr('needs_creation', 'equalto', true) | list | length > 0
+      
+    - name: Abort if user doesn't confirm
+      fail:
+        msg: "User aborted due to missing target volumes"
+      when: 
+        - user_confirmation is defined
+        - user_confirmation.user_input | lower != "yes"
+        
+    # Step 3: Create missing target volumes if needed
+    - name: Create missing target volumes
+      purestorage.flasharray.purefa_vol:
+        name: "{{ item.target }}"
+        size: "{{ array_info.purefa_info.volumes[item.source].size }}"
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      loop: "{{ auto_volume_mappings }}"
+      when: item.needs_creation | default(false)
+      delegate_to: localhost
+      
+    # Step 4: Get current target volume connections
+    - name: Get host connections for target volumes
+      set_fact:
+        target_connections: >-
+          {% set connections = {} %}
+          {% for mapping in auto_volume_mappings %}
+            {% if mapping.target in array_info.purefa_info.volumes %}
+              {% set hosts = array_info.purefa_info.volumes[mapping.target].host_connections | default([]) %}
+              {% set _ = connections.update({mapping.target: hosts}) %}
+            {% endif %}
+          {% endfor %}
+          {{ connections }}
+          
+    - name: Display current connections
+      debug:
+        msg: "Volume {{ item.key }} is connected to: {{ item.value | join(', ') if item.value | length > 0 else 'No hosts' }}"
+      loop: "{{ target_connections | dict2items }}"
+      
+    # Step 5: Shutdown clone database
+    - name: Check if clone database is running
+      shell: |
+        sqlplus -s / as sysdba << EOF
+        SELECT status FROM v\$instance;
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ oracle_home }}"
+        ORACLE_SID: "{{ oracle_sid }}"
+      register: db_status
+      failed_when: false
+      
+    - name: Shutdown clone database
+      shell: |
+        sqlplus -s / as sysdba << EOF
+        SHUTDOWN IMMEDIATE;
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ oracle_home }}"
+        ORACLE_SID: "{{ oracle_sid }}"
+      when: "'OPEN' in db_status.stdout"
+      
+    # Step 6: Dismount ASM disk groups
+    - name: Get ASM disk groups using source volumes
+      shell: |
+        sqlplus -s / as sysasm << EOF
+        SET PAGESIZE 0 FEEDBACK OFF VERIFY OFF HEADING OFF ECHO OFF
+        SELECT DISTINCT dg.name
+        FROM v\$asm_diskgroup dg
+        JOIN v\$asm_disk d ON dg.group_number = d.group_number
+        WHERE d.path IN (SELECT path FROM v\$asm_disk WHERE path IS NOT NULL);
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ grid_home }}"
+        ORACLE_SID: "+ASM"
+      register: asm_diskgroups
+      
+    - name: Dismount ASM disk groups
+      shell: |
+        sqlplus -s / as sysasm << EOF
+        ALTER DISKGROUP {{ item }} DISMOUNT FORCE;
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ grid_home }}"
+        ORACLE_SID: "+ASM"
+      loop: "{{ asm_diskgroups.stdout_lines }}"
+      when: asm_diskgroups.stdout_lines | length > 0
+      
+    # Step 7: Create protection group snapshot
+    - name: Create protection group snapshot
+      purestorage.flasharray.purefa_pgsnap:
+        name: "{{ protection_group }}"
+        suffix: "ansible-{{ ansible_date_time.epoch }}"
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      register: snapshot_info
+      delegate_to: localhost
+      
+    # Step 8: Copy volumes from snapshot to clone
+    - name: Copy volumes from source to clone
+      purestorage.flasharray.purefa_volume:
+        name: "{{ item.target }}"
+        source: "{{ protection_group }}.{{ snapshot_info.suffix }}.{{ item.source }}"
+        overwrite: true
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      loop: "{{ auto_volume_mappings }}"
+      delegate_to: localhost
+      
+    # Step 9: Ensure volumes are connected to clone host
+    - name: Connect volumes to clone host if not already connected
+      purestorage.flasharray.purefa_host:
+        name: "{{ clone_host }}"
+        volume: "{{ item.target }}"
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      loop: "{{ auto_volume_mappings }}"
+      when: clone_host not in target_connections[item.target] | default([])
+      delegate_to: localhost
+      
+    # Step 10: Rescan and mount
+    - name: Rescan SCSI devices
+      shell: |
+        for host in /sys/class/scsi_host/host*; do
+          echo "- - -" > ${host}/scan
+        done
+      become: yes
+      become_user: root
+      
+    - name: Wait for devices to stabilize
+      pause:
+        seconds: 10
+        
+    - name: Mount ASM disk groups
+      shell: |
+        sqlplus -s / as sysasm << EOF
+        {% for dg in asm_diskgroups.stdout_lines %}
+        ALTER DISKGROUP {{ dg }} MOUNT;
+        {% endfor %}
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ grid_home }}"
+        ORACLE_SID: "+ASM"
+      when: asm_diskgroups.stdout_lines | length > 0
+      
+    # Step 11: Start clone database
+    - name: Start clone database
+      shell: |
+        sqlplus -s / as sysdba << EOF
+        STARTUP;
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ oracle_home }}"
+        ORACLE_SID: "{{ oracle_sid }}"
+        
+    # Step 12: Validation
+    - name: Validate database refresh
+      shell: |
+        sqlplus -s / as sysdba << EOF
+        SELECT name, open_mode FROM v\$database;
+        SELECT instance_name, status FROM v\$instance;
+        EXIT;
+        EOF
+      environment:
+        ORACLE_HOME: "{{ oracle_home }}"
+        ORACLE_SID: "{{ oracle_sid }}"
+      register: validation_result
+      
+    - name: Display validation results
+      debug:
+        msg:
+          - "Database refresh completed successfully!"
+          - "{{ validation_result.stdout }}"
+          - "Volume mappings used:"
+          - "{{ auto_volume_mappings }}"
