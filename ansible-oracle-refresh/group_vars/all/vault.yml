@@ -1,0 +1,8 @@
+# group_vars/all/vault.yml (encrypted)
+pure_array_hostname: flasharray1
+pure_username: pureuser
+pure_password: "pureuser"
+
+source_pgroup: pgroup_orcl_source
+clone_pgroup: pgroup_orcl_clone
+
