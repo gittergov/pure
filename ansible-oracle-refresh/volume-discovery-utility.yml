@@ -1,0 +1,254 @@
+---
+# Volume Discovery and Mapping Utility for Oracle Pure Storage Refresh
+# This playbook helps discover and map volumes between environments
+
+- name: Volume Discovery and Mapping Utility
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    flasharray_host: "{{ array_host | default('flasharray1') }}"
+    flasharray_user: "{{ array_user | default('pureuser') }}"
+    flasharray_password: "{{ array_password | default('pureuser') }}"
+    
+    # Discovery filters
+    volume_filters:
+      - "*oracle*"
+      - "*db*"
+      - "*asm*"
+    
+    # Common volume name patterns in Oracle environments
+    common_patterns:
+      - pattern: "data"
+        purpose: "Oracle data files"
+      - pattern: "fra"
+        purpose: "Fast Recovery Area"
+      - pattern: "redo"
+        purpose: "Redo logs"
+      - pattern: "arch"
+        purpose: "Archive logs"
+      - pattern: "temp"
+        purpose: "Temporary tablespace"
+      - pattern: "undo"
+        purpose: "Undo tablespace"
+      - pattern: "ocr"
+        purpose: "Oracle Cluster Registry"
+      - pattern: "vote"
+        purpose: "Voting disk"
+        
+  tasks:
+    - name: Connect to Pure Storage FlashArray
+      purestorage.flasharray.purefa_info:
+        gather_subset:
+          - minimum
+          - volumes
+          - hosts
+          - pgroups
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      register: array_info
+      
+    - name: Display array information
+      debug:
+        msg:
+          - "Array Name: {{ array_info.purefa_info.default.array_name }}"
+          - "Purity Version: {{ array_info.purefa_info.default.purity_version }}"
+          
+    - name: Discover all protection groups
+      set_fact:
+        all_pgroups: "{{ array_info.purefa_info.pgroups.keys() | list }}"
+        
+    - name: Display protection groups
+      debug:
+        msg: "Found {{ all_pgroups | length }} protection groups: {{ all_pgroups | join(', ') }}"
+        
+    - name: Analyze each protection group
+      include_tasks: analyze_pgroup.yml
+      vars:
+        pgroup_name: "{{ item }}"
+        pgroup_data: "{{ array_info.purefa_info.pgroups[item] }}"
+      loop: "{{ all_pgroups }}"
+      when: all_pgroups | length > 0
+      
+    - name: Discover Oracle-related volumes
+      set_fact:
+        oracle_volumes: >-
+          {% set volumes = [] %}
+          {% for vol_name, vol_data in array_info.purefa_info.volumes.items() %}
+            {% for filter in volume_filters %}
+              {% if vol_name is search(filter | regex_replace('\*', '.*')) %}
+                {% set _ = volumes.append({
+                  'name': vol_name,
+                  'size': vol_data.size,
+                  'hosts': vol_data.host_connections | default([]),
+                  'created': vol_data.created,
+                  'serial': vol_data.serial
+                }) %}
+                {% break %}
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {{ volumes | unique }}
+          
+    - name: Group volumes by host
+      set_fact:
+        volumes_by_host: >-
+          {% set host_volumes = {} %}
+          {% for vol in oracle_volumes %}
+            {% for host in vol.hosts %}
+              {% if host not in host_volumes %}
+                {% set _ = host_volumes.update({host: []}) %}
+              {% endif %}
+              {% set _ = host_volumes[host].append(vol.name) %}
+            {% endfor %}
+          {% endfor %}
+          {{ host_volumes }}
+          
+    - name: Identify volume patterns
+      set_fact:
+        volume_patterns: >-
+          {% set patterns = {} %}
+          {% for pattern in common_patterns %}
+            {% set matching_vols = [] %}
+            {% for vol in oracle_volumes %}
+              {% if pattern.pattern in vol.name.lower() %}
+                {% set _ = matching_vols.append(vol.name) %}
+              {% endif %}
+            {% endfor %}
+            {% if matching_vols | length > 0 %}
+              {% set _ = patterns.update({pattern.pattern: {
+                'purpose': pattern.purpose,
+                'volumes': matching_vols
+              }}) %}
+            {% endif %}
+          {% endfor %}
+          {{ patterns }}
+          
+    - name: Generate volume mapping suggestions
+      set_fact:
+        mapping_suggestions: >-
+          {% set suggestions = [] %}
+          {% for host, volumes in volumes_by_host.items() %}
+            {% if 'source' in host.lower() or '1' in host %}
+              {% set source_host = host %}
+              {% set target_host = host | regex_replace('1', '2') | regex_replace('source', 'target') | regex_replace('prod', 'dev') %}
+              {% if target_host in volumes_by_host %}
+                {% for source_vol in volumes %}
+                  {% set suggested_target = source_vol | regex_replace(source_host, target_host) %}
+                  {% if suggested_target in volumes_by_host[target_host] %}
+                    {% set _ = suggestions.append({
+                      'source': source_vol,
+                      'target': suggested_target,
+                      'confidence': 'high'
+                    }) %}
+                  {% else %}
+                    {% set _ = suggestions.append({
+                      'source': source_vol,
+                      'target': suggested_target,
+                      'confidence': 'low',
+                      'note': 'Target volume does not exist'
+                    }) %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {{ suggestions }}
+          
+    - name: Create discovery report
+      copy:
+        content: |
+          # Pure Storage Volume Discovery Report
+          # Generated: {{ ansible_date_time.iso8601 }}
+          # Array: {{ array_info.purefa_info.default.array_name }}
+          
+          ## Protection Groups
+          {% for pg in all_pgroups %}
+          - {{ pg }}
+          {%- if array_info.purefa_info.pgroups[pg].volumes is defined %}
+            - Volumes: {{ array_info.purefa_info.pgroups[pg].volumes | join(', ') }}
+          {%- endif %}
+          {% endfor %}
+          
+          ## Oracle-Related Volumes
+          Total: {{ oracle_volumes | length }}
+          
+          {% for vol in oracle_volumes %}
+          ### {{ vol.name }}
+          - Size: {{ (vol.size / 1073741824) | round(2) }} GB
+          - Connected to: {{ vol.hosts | join(', ') if vol.hosts else 'Not connected' }}
+          - Serial: {{ vol.serial }}
+          {% endfor %}
+          
+          ## Volumes by Host
+          {% for host, vols in volumes_by_host.items() %}
+          ### {{ host }}
+          {% for vol in vols %}
+          - {{ vol }}
+          {% endfor %}
+          {% endfor %}
+          
+          ## Volume Type Analysis
+          {% for pattern, data in volume_patterns.items() %}
+          ### {{ data.purpose }}
+          Pattern: *{{ pattern }}*
+          Volumes:
+          {% for vol in data.volumes %}
+          - {{ vol }}
+          {% endfor %}
+          {% endfor %}
+          
+          ## Suggested Volume Mappings
+          {% for suggestion in mapping_suggestions %}
+          - {{ suggestion.source }} → {{ suggestion.target }} [{{ suggestion.confidence }} confidence]
+          {%- if suggestion.note is defined %}
+            Note: {{ suggestion.note }}
+          {%- endif %}
+          {% endfor %}
+          
+        dest: ./volume_discovery_report.md
+        
+    - name: Create volume mapping configuration
+      copy:
+        content: |
+          # Auto-generated volume mapping configuration
+          # Review and adjust as needed
+          
+          volume_mappings:
+          {% for suggestion in mapping_suggestions %}
+          {% if suggestion.confidence == 'high' %}
+            - source: {{ suggestion.source }}
+              target: {{ suggestion.target }}
+          {% endif %}
+          {% endfor %}
+          
+          # Low confidence mappings (review required)
+          # {% for suggestion in mapping_suggestions %}
+          # {% if suggestion.confidence == 'low' %}
+          #   - source: {{ suggestion.source }}
+          #     target: {{ suggestion.target }}  # {{ suggestion.note }}
+          # {% endif %}
+          # {% endfor %}
+        dest: ./suggested_volume_mappings.yml
+        
+    - name: Display summary
+      debug:
+        msg:
+          - "Discovery complete!"
+          - "Found {{ oracle_volumes | length }} Oracle-related volumes"
+          - "Found {{ all_pgroups | length }} protection groups"
+          - "Generated {{ mapping_suggestions | length }} mapping suggestions"
+          - "Reports saved to:"
+          - "  - volume_discovery_report.md"
+          - "  - suggested_volume_mappings.yml"
+
+# Include file for protection group analysis
+---
+# analyze_pgroup.yml
+- name: Display protection group details
+  debug:
+    msg:
+      - "Protection Group: {{ pgroup_name }}"
+      - "Volumes: {{ pgroup_data.volumes | default([]) | join(', ') }}"
+      - "Hosts: {{ pgroup_data.hosts | default([]) | join(', ') }}"
+  when: pgroup_data.volumes is defined and pgroup_data.volumes | length > 0

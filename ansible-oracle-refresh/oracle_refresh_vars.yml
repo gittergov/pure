@@ -1,0 +1,123 @@
+# Oracle Database Refresh Variables
+# This file contains all configurable variables for the Oracle refresh playbook
+
+# Oracle Configuration
+oracle_base: /u01/app/oracle
+oracle_home: /u01/app/oracle/product/19.0.0/dbhome_1
+grid_home: /u01/app/19.0.0/grid
+oracle_sid: orcl
+oracle_user: oracle
+oracle_password: Password1!
+
+# Host Configuration
+source_host: oracle1
+clone_host: oracle2
+source_protection_group: Oracle1-PG
+clone_protection_group: Oracle2-PG
+
+# Pure Storage FlashArray Configuration
+flasharray_details:
+  - name: flasharray1
+    host: 192.168.1.100  # Replace with actual IP
+    api_token: "{{ vault_pure_api_token }}"  # Encrypted in vault
+    user: pureuser
+    password: "{{ vault_pure_password }}"  # Encrypted in vault
+
+# Volume Mapping Configuration
+# The playbook will automatically discover volumes from the protection group
+# and map them based on these patterns
+volume_mapping_strategy: "automatic"  # Options: automatic, pattern, manual
+
+# Pattern-based mapping rules (applied in order)
+volume_mapping_rules:
+  - search: "oracle1"
+    replace: "oracle2"
+  - search: "prod"
+    replace: "dev"
+  - search: "source"
+    replace: "target"
+  - search: "_1_"
+    replace: "_2_"
+    
+# Advanced mapping options
+mapping_options:
+  create_missing_volumes: false  # Create target volumes if they don't exist
+  verify_size_match: true       # Ensure source and target volumes are same size
+  preserve_connections: true    # Keep existing host connections
+  
+# Volume discovery filters (regex patterns)
+volume_discovery_filters:
+  include:
+    - ".*"  # Include all volumes by default
+  exclude:
+    - ".*test.*"  # Exclude test volumes
+    - ".*backup.*"  # Exclude backup volumes
+
+# ASM Configuration
+asm_diskgroups:
+  - name: DATA
+    redundancy: EXTERNAL
+    disks: 
+      - /dev/oracle/data1
+      - /dev/oracle/data2
+  - name: FRA
+    redundancy: EXTERNAL
+    disks:
+      - /dev/oracle/fra1
+  - name: REDO
+    redundancy: EXTERNAL
+    disks:
+      - /dev/oracle/redo1
+      - /dev/oracle/redo2
+
+# iSCSI Configuration
+iscsi_targets:
+  - iqn: iqn.2010-06.com.purestorage:flasharray.12345678
+    portal: 192.168.1.101
+  - iqn: iqn.2010-06.com.purestorage:flasharray.12345678
+    portal: 192.168.1.102
+
+# Script Locations
+script_base_dir: /home/oracle/lab/lab1
+bash_scripts_dir: "{{ script_base_dir }}/bash"
+sql_scripts_dir: "{{ script_base_dir }}/sql"
+
+# Notification Settings
+send_notifications: true
+notification_emails:
+  - dba-team@company.com
+  - oracle-admins@company.com
+
+# Backup and Retention
+snapshot_retention_days: 7
+snapshot_prefix: "refresh"
+keep_last_n_snapshots: 5
+
+# Performance Tuning
+parallel_degree: 4
+asm_power_limit: 1
+
+# Error Handling
+max_retry_attempts: 3
+retry_delay_seconds: 30
+continue_on_error: false
+
+# Validation Checks
+validation_checks:
+  - check_db_size: true
+  - check_tablespace_usage: true
+  - check_invalid_objects: true
+  - check_archive_log_mode: true
+  - verify_demo_record: true
+
+# Post Refresh Tasks
+post_refresh_tasks:
+  - update_tnsnames: true
+  - refresh_statistics: false
+  - reset_passwords: false
+  - mask_sensitive_data: false
+
+# Logging Configuration
+log_level: INFO
+log_directory: /home/oracle/refresh_logs
+log_retention_days: 30

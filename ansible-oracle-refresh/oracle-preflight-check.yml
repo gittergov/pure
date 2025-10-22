@@ -1,0 +1,246 @@
+---
+# Pre-flight Check Playbook for Oracle Database Refresh
+# Run this before the main refresh to discover and validate the environment
+
+- name: Oracle Database Refresh Pre-flight Check
+  hosts: localhost
+  gather_facts: no
+  
+  vars_prompt:
+    - name: source_pattern
+      prompt: "Enter source hostname pattern (e.g., oracle1, prod)"
+      private: no
+      default: "oracle1"
+      
+    - name: target_pattern
+      prompt: "Enter target hostname pattern (e.g., oracle2, dev)"
+      private: no
+      default: "oracle2"
+      
+    - name: protection_group_name
+      prompt: "Enter the protection group name"
+      private: no
+      default: "Oracle1-PG"
+      
+    - name: flasharray_host
+      prompt: "Enter FlashArray hostname/IP"
+      private: no
+      default: "flasharray1"
+      
+  vars:
+    flasharray_user: pureuser
+    flasharray_password: pureuser
+    
+  tasks:
+    - name: Test Pure Storage connectivity
+      uri:
+        url: "https://{{ flasharray_host }}/api/1.19/auth/session"
+        method: POST
+        body_format: json
+        body:
+          api_token: "{{ flasharray_password }}"
+        validate_certs: no
+      register: pure_auth_test
+      failed_when: false
+      
+    - name: Check authentication result
+      assert:
+        that:
+          - pure_auth_test.status == 200
+        fail_msg: "Failed to authenticate to FlashArray. Check hostname and credentials."
+        success_msg: "Successfully authenticated to FlashArray"
+        
+    - name: Gather array information
+      purestorage.flasharray.purefa_info:
+        gather_subset:
+          - minimum
+          - volumes  
+          - hosts
+          - pgroups
+        fa_url: "{{ flasharray_host }}"
+        api_token: "{{ flasharray_password }}"
+      register: array_info
+      
+    - name: Verify protection group exists
+      assert:
+        that:
+          - protection_group_name in array_info.purefa_info.pgroups
+        fail_msg: "Protection group '{{ protection_group_name }}' not found"
+        success_msg: "Protection group '{{ protection_group_name }}' found"
+        
+    - name: Get source volumes from protection group
+      set_fact:
+        source_volumes: "{{ array_info.purefa_info.pgroups[protection_group_name].volumes | default([]) }}"
+        
+    - name: Check if protection group has volumes
+      assert:
+        that:
+          - source_volumes | length > 0
+        fail_msg: "Protection group has no volumes"
+        success_msg: "Found {{ source_volumes | length }} volumes in protection group"
+        
+    - name: Analyze source volumes
+      set_fact:
+        volume_analysis: >-
+          {% set analysis = [] %}
+          {% for vol in source_volumes %}
+            {% set vol_info = array_info.purefa_info.volumes[vol] %}
+            {% set _ = analysis.append({
+              'name': vol,
+              'size_gb': (vol_info.size / 1073741824) | round(2),
+              'hosts': vol_info.host_connections | default([]),
+              'serial': vol_info.serial
+            }) %}
+          {% endfor %}
+          {{ analysis }}
+          
+    - name: Find matching target volumes
+      set_fact:
+        target_volume_mapping: >-
+          {% set mappings = [] %}
+          {% for source_vol in source_volumes %}
+            {% set target_vol = source_vol | replace(source_pattern, target_pattern) %}
+            {% set exists = target_vol in array_info.purefa_info.volumes %}
+            {% set size_match = false %}
+            {% if exists %}
+              {% set source_size = array_info.purefa_info.volumes[source_vol].size %}
+              {% set target_size = array_info.purefa_info.volumes[target_vol].size %}
+              {% set size_match = source_size == target_size %}
+            {% endif %}
+            {% set _ = mappings.append({
+              'source': source_vol,
+              'target': target_vol,
+              'exists': exists,
+              'size_match': size_match,
+              'source_size_gb': (array_info.purefa_info.volumes[source_vol].size / 1073741824) | round(2)
+            }) %}
+          {% endfor %}
+          {{ mappings }}
+          
+    - name: Check for missing target volumes
+      set_fact:
+        missing_volumes: "{{ target_volume_mapping | selectattr('exists', 'equalto', false) | list }}"
+        size_mismatches: "{{ target_volume_mapping | selectattr('exists', 'equalto', true) | selectattr('size_match', 'equalto', false) | list }}"
+        
+    - name: Display pre-flight check summary
+      debug:
+        msg:
+          - "=== PRE-FLIGHT CHECK SUMMARY ==="
+          - "FlashArray: {{ array_info.purefa_info.default.array_name }}"
+          - "Protection Group: {{ protection_group_name }}"
+          - "Source Volumes: {{ source_volumes | length }}"
+          - ""
+          - "=== VOLUME MAPPING ANALYSIS ==="
+          
+    - name: Display volume mappings
+      debug:
+        msg: "{{ item.source }} -> {{ item.target }} [{{ 'EXISTS' if item.exists else 'MISSING' }}] ({{ item.source_size_gb }} GB)"
+      loop: "{{ target_volume_mapping }}"
+      
+    - name: Display warnings if any
+      debug:
+        msg:
+          - "=== WARNINGS ==="
+          - "Missing target volumes: {{ missing_volumes | length }}"
+          - "Size mismatches: {{ size_mismatches | length }}"
+      when: missing_volumes | length > 0 or size_mismatches | length > 0
+      
+    - name: Generate mapping configuration file
+      copy:
+        content: |
+          # Auto-generated volume mapping configuration
+          # Generated: {{ ansible_date_time.iso8601 }}
+          # Source Pattern: {{ source_pattern }}
+          # Target Pattern: {{ target_pattern }}
+          # Protection Group: {{ protection_group_name }}
+          
+          flasharray_host: {{ flasharray_host }}
+          protection_group: {{ protection_group_name }}
+          
+          # Volume mapping rules
+          volume_mapping_rules:
+            - search: "{{ source_pattern }}"
+              replace: "{{ target_pattern }}"
+          
+          # Discovered mappings
+          discovered_mappings:
+          {% for mapping in target_volume_mapping %}
+            - source: {{ mapping.source }}
+              target: {{ mapping.target }}
+              exists: {{ mapping.exists }}
+              size_gb: {{ mapping.source_size_gb }}
+          {% endfor %}
+          
+          # Action required for missing volumes
+          {% if missing_volumes | length > 0 %}
+          missing_target_volumes:
+          {% for vol in missing_volumes %}
+            - source: {{ vol.source }}
+              target: {{ vol.target }}
+              size_gb: {{ vol.source_size_gb }}
+              action: "Create volume or adjust mapping"
+          {% endfor %}
+          {% endif %}
+        dest: "./preflight_check_{{ ansible_date_time.epoch }}.yml"
+        
+    - name: Save detailed report
+      copy:
+        content: |
+          # Oracle Database Refresh Pre-flight Check Report
+          
+          ## Environment Details
+          - **Date**: {{ ansible_date_time.iso8601 }}
+          - **FlashArray**: {{ array_info.purefa_info.default.array_name }}
+          - **Protection Group**: {{ protection_group_name }}
+          - **Source Pattern**: {{ source_pattern }}
+          - **Target Pattern**: {{ target_pattern }}
+          
+          ## Source Volumes Analysis
+          | Volume Name | Size (GB) | Connected Hosts | Serial |
+          |-------------|-----------|-----------------|--------|
+          {% for vol in volume_analysis %}
+          | {{ vol.name }} | {{ vol.size_gb }} | {{ vol.hosts | join(', ') if vol.hosts else 'None' }} | {{ vol.serial }} |
+          {% endfor %}
+          
+          ## Volume Mapping Status
+          | Source | Target | Status | Size (GB) | Action Required |
+          |--------|--------|--------|-----------|-----------------|
+          {% for mapping in target_volume_mapping %}
+          | {{ mapping.source }} | {{ mapping.target }} | {{ 'Ready' if mapping.exists and mapping.size_match else 'Not Ready' }} | {{ mapping.source_size_gb }} | {{ 'None' if mapping.exists else 'Create volume' }} |
+          {% endfor %}
+          
+          ## Summary
+          - **Total Volumes**: {{ source_volumes | length }}
+          - **Ready for Refresh**: {{ target_volume_mapping | selectattr('exists', 'equalto', true) | list | length }}
+          - **Missing Volumes**: {{ missing_volumes | length }}
+          - **Size Mismatches**: {{ size_mismatches | length }}
+          
+          ## Recommendations
+          {% if missing_volumes | length > 0 %}
+          1. Create the following missing target volumes:
+          {% for vol in missing_volumes %}
+             - `{{ vol.target }}` ({{ vol.source_size_gb }} GB)
+          {% endfor %}
+          {% endif %}
+          
+          {% if size_mismatches | length > 0 %}
+          2. Resize the following volumes to match source:
+          {% for vol in size_mismatches %}
+             - `{{ vol.target }}` (current size doesn't match source)
+          {% endfor %}
+          {% endif %}
+          
+          {% if missing_volumes | length == 0 and size_mismatches | length == 0 %}
+          ✅ All target volumes exist and match source sizes. Ready for refresh!
+          {% endif %}
+        dest: "./preflight_report_{{ ansible_date_time.date }}.md"
+        
+    - name: Display completion message
+      debug:
+        msg:
+          - "Pre-flight check complete!"
+          - "Reports saved to:"
+          - "  - preflight_check_{{ ansible_date_time.epoch }}.yml"
+          - "  - preflight_report_{{ ansible_date_time.date }}.md"
+          - ""
+          - "{{ 'Ready for refresh!' if missing_volumes | length == 0 else 'Action required before refresh!' }}"
