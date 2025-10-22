@@ -20,6 +20,7 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
+      . /home/oracle/.bash_profile
       echo "[$(date)] Stopping Oracle..." | tee -a {{ log_file }}
       sqlplus -s / as sysdba <<EOF
       shutdown immediate;
