@@ -1,128 +1,147 @@
 ---
-# Oracle Database Refresh Lab – Pure Storage FlashArray (No DB stop/start)
-
-- name: Oracle DB Refresh Automation - FlashArray Only
-  hosts: all
+- name: Oracle DB Refresh Automation – FlashArray1 (Source: oracle2 → Target: oracle1)
+  hosts:
+    - oracle2
+    - oracle1
   gather_facts: no
   vars_files:
     - group_vars/all/vault.yml
 
+  vars:
+    # Variables used for Oracle environment
+    oracle_sid: orcl
+    oracle_home: /u01/app/oracle/product/19c/dbhome_1
+    oraenv_path: /u01/app/oracle/product/19c/dbhome_1/bin/oraenv
+    oraenv_ask: NO
+    oracle_user: oracle
+    log_file: /tmp/oracle_refresh.log
+
   tasks:
 
-  ##############################################################
-  # 1️⃣ Insert verification record into the Source DB (optional)
-  ##############################################################
-  - name: Insert verification record into Source DB
-    delegate_to: oracle1
+  ##########################################################################
+  # 1️⃣  STOP ORACLE DATABASE ON TARGET HOST (oracle1)
+  ##########################################################################
+  - name: Stop Oracle Database on target host
+    when: inventory_hostname == "oracle1"
     become: yes
-    become_user: oracle
+    become_user: "{{ oracle_user }}"
     shell: |
-      . {{ oracle_env_file }}
+      export ORACLE_SID={{ oracle_sid }}
+      export ORAENV_ASK={{ oraenv_ask }}
+      . {{ oraenv_path }} >/dev/null 2>&1
+      echo "[$(date)] Stopping Oracle instance $ORACLE_SID..." | tee -a {{ log_file }}
       sqlplus -s / as sysdba <<EOF
-      create table refresh_check (check_time date);
-      insert into refresh_check values (sysdate);
-      commit;
+      shutdown immediate;
       exit;
       EOF
+    register: stop_db_result
+    ignore_errors: yes
 
-  ##############################################################
-  # 2️⃣ Log in to the FlashArray using username/password
-  ##############################################################
-  - name: Login to FlashArray
-    delegate_to: localhost
-    shell: |
-      echo "{{ pure_password }}" | pureadmin create --username {{ pure_username }} --array {{ pure_array_hostname }}
-    register: login_result
-    changed_when: "'Created configuration' in login_result.stdout or 'already exists' in login_result.stdout"
-
-  - name: Confirm FlashArray login
-    delegate_to: localhost
+  - name: Show DB stop result
+    when: inventory_hostname == "oracle1"
     debug:
-      var: login_result.stdout_lines
+      var: stop_db_result.stdout_lines
 
-  ##############################################################
-  # 3️⃣ Create a snapshot of the Source Protection Group
-  ##############################################################
-  - name: Create snapshot of Source Protection Group
-    delegate_to: localhost
-    command: purepgroup snap {{ source_pgroup }}
-    register: snap_result
+  ##########################################################################
+  # 2️⃣  CREATE SNAPSHOT OF SOURCE DATABASE PROTECTION GROUP ON FLASHARRAY
+  ##########################################################################
+  - name: Create snapshot of source protection group
+    when: inventory_hostname == "oracle2"
+    shell: |
+      purepgroup snap {{ source_pgroup }}
+    environment:
+      PUREARRAY: "{{ pure_array_hostname }}"
+      PURETOKEN: "{{ pure_api_token }}"
+    register: snap_create
+    changed_when: "'Created' in snap_create.stdout or 'created' in snap_create.stderr"
 
-  - debug:
-      var: snap_result.stdout_lines
-    delegate_to: localhost
+  - name: Display snapshot creation output
+    when: inventory_hostname == "oracle2"
+    debug:
+      var: snap_create.stdout_lines
 
-  ##############################################################
-  # 4️⃣ Identify latest snapshot name
-  ##############################################################
+  ##########################################################################
+  # 3️⃣  GET LATEST SNAPSHOT NAME
+  ##########################################################################
   - name: Get latest snapshot name
-    delegate_to: localhost
+    when: inventory_hostname == "oracle2"
     shell: |
       purepgroup list --snap {{ source_pgroup }} --sort "created:-" --limit 1 --csv | tail -n 1 | cut -d, -f1
     register: latest_snapshot_name
 
-  - debug:
-      msg: "Latest snapshot: {{ latest_snapshot_name.stdout.strip() }}"
-    delegate_to: localhost
+  - name: Show latest snapshot
+    when: inventory_hostname == "oracle2"
+    debug:
+      msg: "Latest snapshot created: {{ latest_snapshot_name.stdout.strip() }}"
 
-  ##############################################################
-  # 5️⃣ Overwrite Clone Volumes from Snapshot
-  ##############################################################
-  - name: Get list of Clone volumes
-    delegate_to: localhost
+  ##########################################################################
+  # 4️⃣  OVERWRITE TARGET (oracle1) CLONE VOLUMES USING SNAPSHOT
+  ##########################################################################
+  - name: Get clone volumes from target pgroup
+    when: inventory_hostname == "oracle2"
     shell: |
       purepgroup list {{ clone_pgroup }} --volumes --csv | tail -n +2 | cut -d, -f1
     register: clone_volumes
 
-  - name: Display Clone Volumes
-    delegate_to: localhost
-    debug:
-      var: clone_volumes.stdout_lines
-
-  - name: Overwrite Clone Volumes from Snapshot
-    delegate_to: localhost
+  - name: Perform overwrite for each clone volume
+    when: inventory_hostname == "oracle2"
     loop: "{{ clone_volumes.stdout_lines }}"
     loop_control:
       loop_var: clone_vol
     shell: |
+      echo "Overwriting {{ clone_vol }} from snapshot {{ latest_snapshot_name.stdout.strip() }}..."
       purevol overwrite --source {{ latest_snapshot_name.stdout.strip() }}.{{ clone_vol | basename }} {{ clone_vol }}
+    environment:
+      PUREARRAY: "{{ pure_array_hostname }}"
+      PURETOKEN: "{{ pure_api_token }}"
     register: overwrite_result
     ignore_errors: yes
 
-  - name: Show overwrite results
-    delegate_to: localhost
+  - name: Display overwrite results
+    when: inventory_hostname == "oracle2"
     debug:
       var: overwrite_result.results
 
-  ##############################################################
-  # 6️⃣ Mount ASM and verify Clone DB (manual or via existing scripts)
-  ##############################################################
-  - name: Run mount_asm.sh script
-    delegate_to: oracle2
+  ##########################################################################
+  # 5️⃣  START ORACLE DATABASE ON TARGET HOST (oracle1)
+  ##########################################################################
+  - name: Start Oracle Database on target host
+    when: inventory_hostname == "oracle1"
     become: yes
-    become_user: oracle
+    become_user: "{{ oracle_user }}"
     shell: |
-      cd /home/oracle/lab/lab1/bash
-      ./mount_asm.sh
+      export ORACLE_SID={{ oracle_sid }}
+      export ORAENV_ASK={{ oraenv_ask }}
+      . {{ oraenv_path }} >/dev/null 2>&1
+      echo "[$(date)] Starting Oracle instance $ORACLE_SID..." | tee -a {{ log_file }}
+      sqlplus -s / as sysdba <<EOF
+      startup;
+      exit;
+      EOF
+    register: start_db_result
+    ignore_errors: yes
 
-  - name: Verify Clone DB record using show_demo_rec.sh
-    delegate_to: oracle2
+  - name: Show DB start result
+    when: inventory_hostname == "oracle1"
+    debug:
+      var: start_db_result.stdout_lines
+
+  ##########################################################################
+  # 6️⃣  VERIFY ORACLE DATABASE STATUS
+  ##########################################################################
+  - name: Verify DB open mode
+    when: inventory_hostname == "oracle1"
     become: yes
-    become_user: oracle
+    become_user: "{{ oracle_user }}"
     shell: |
-      cd /home/oracle/lab/lab1/bash
-      ./show_demo_rec.sh
-    register: verify_result
+      export ORACLE_SID={{ oracle_sid }}
+      export ORAENV_ASK={{ oraenv_ask }}
+      . {{ oraenv_path }} >/dev/null 2>&1
+      echo "select open_mode from v\\$database;" | sqlplus -s / as sysdba
+    register: db_status
 
-  - name: Show verification result
-    delegate_to: oracle2
+  - name: Display DB open mode
+    when: inventory_hostname == "oracle1"
     debug:
-      var: verify_result.stdout_lines
-
-  ##############################################################
-  # ✅ Done
-  ##############################################################
-  - name: Refresh Completed
-    debug:
-      msg: "Snapshot and volume overwrite completed successfully. Please start Oracle DB manually on clone host and verify record."
+      msg: "{{ db_status.stdout_lines }}"
 
