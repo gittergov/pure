@@ -1,6 +1,5 @@
+ERROR! No argument passed to command module (did you mean to run ansible-playbook?)
 [root@oracle1 ansible-oracle-refresh]# ansible-playbook snapshot_refresh.yml -i inventory.ini
-[WARNING]: Found both group and host with same name: oracle1
-[WARNING]: Found both group and host with same name: oracle2
 
 PLAY [Oracle DB Refresh Automation - FlashArray1 (Source: oracle2 -> Target: oracle1)] ********************************
 
@@ -9,18 +8,20 @@ skipping: [oracle2]
 [WARNING]: Platform linux on host oracle1 is using the discovered Python interpreter at /usr/bin/python, but future
 installation of another Python interpreter could change this. See
 https://docs.ansible.com/ansible/2.9/reference_appendices/interpreter_discovery.html for more information.
-fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "export ORACLE_SID=orcl\nexport ORAENV_ASK=False\n. /u01/app/oracle/product/19c/dbhome_1/bin/oraenv >/dev/null 2>&1\necho \"[$(date)] Stopping Oracle instance $ORACLE_SID...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nshutdown immediate;\nexit;\nEOF\n", "delta": "0:00:00.006297", "end": "2025-10-22 10:57:06.769495", "msg": "non-zero return code", "rc": 1, "start": "2025-10-22 10:57:06.763198", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "echo \"[$(date)] Stopping Oracle...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nshutdown immediate;\nexit;\nEOF\n", "delta": "0:00:00.005893", "end": "2025-10-22 11:22:09.044853", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:22:09.038960", "stderr": "/bin/sh: line 1: sqlplus: command not found", "stderr_lines": ["/bin/sh: line 1: sqlplus: command not found"], "stdout": "[Wed Oct 22 11:22:09 PDT 2025] Stopping Oracle...", "stdout_lines": ["[Wed Oct 22 11:22:09 PDT 2025] Stopping Oracle..."]}
 ...ignoring
 
 TASK [Show DB stop result] ********************************************************************************************
 skipping: [oracle2]
 ok: [oracle1] => {
-    "stop_db_result.stdout_lines": []
+    "stop_db_result.stdout_lines": [
+        "[Wed Oct 22 11:22:09 PDT 2025] Stopping Oracle..."
+    ]
 }
 
 TASK [Create snapshot of source protection group] *********************************************************************
+fatal: [oracle2]: FAILED! => {"msg": "The field 'environment' has an invalid value, which includes an undefined variable. The error was: 'pure_api_token' is undefined\n\nThe error appears to be in '/root/pure/ansible-oracle-refresh/snapshot_refresh.yml': line 39, column 5, but may\nbe elsewhere in the file depending on the exact syntax problem.\n\nThe offending line appears to be:\n\n  ##########################################################################\n  - name: Create snapshot of source protection group\n    ^ here\n"}
 skipping: [oracle1]
-fatal: [oracle2]: FAILED! => {"msg": "The field 'environment' has an invalid value, which includes an undefined variable. The error was: 'pure_api_token' is undefined\n\nThe error appears to be in '/root/pure/ansible-oracle-refresh/snapshot_refresh.yml': line 48, column 5, but may\nbe elsewhere in the file depending on the exact syntax problem.\n\nThe offending line appears to be:\n\n  ##########################################################################\n  - name: Create snapshot of source protection group\n    ^ here\n"}
 
 TASK [Display snapshot creation output] *******************************************************************************
 skipping: [oracle1]
@@ -41,19 +42,19 @@ TASK [Display overwrite results] ***********************************************
 skipping: [oracle1]
 
 TASK [Start Oracle Database on target host] ***************************************************************************
-fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "export ORACLE_SID=orcl\nexport ORAENV_ASK=False\n. /u01/app/oracle/product/19c/dbhome_1/bin/oraenv >/dev/null 2>&1\necho \"[$(date)] Starting Oracle instance $ORACLE_SID...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nstartup;\nexit;\nEOF\n", "delta": "0:00:00.003591", "end": "2025-10-22 10:57:07.446702", "msg": "non-zero return code", "rc": 1, "start": "2025-10-22 10:57:07.443111", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "echo \"[$(date)] Starting Oracle...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nstartup;\nexit;\nEOF\n", "delta": "0:00:00.007637", "end": "2025-10-22 11:22:09.853777", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:22:09.846140", "stderr": "/bin/sh: line 1: sqlplus: command not found", "stderr_lines": ["/bin/sh: line 1: sqlplus: command not found"], "stdout": "[Wed Oct 22 11:22:09 PDT 2025] Starting Oracle...", "stdout_lines": ["[Wed Oct 22 11:22:09 PDT 2025] Starting Oracle..."]}
 ...ignoring
 
 TASK [Show DB start result] *******************************************************************************************
 ok: [oracle1] => {
-    "start_db_result.stdout_lines": []
+    "start_db_result.stdout_lines": [
+        "[Wed Oct 22 11:22:09 PDT 2025] Starting Oracle..."
+    ]
 }
 
 TASK [Verify DB open mode] ********************************************************************************************
-fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "export ORACLE_SID=orcl\nexport ORAENV_ASK=False\n. /u01/app/oracle/product/19c/dbhome_1/bin/oraenv >/dev/null 2>&1\necho \"select open_mode from v\\\\$database;\" | sqlplus -s / as sysdba\n", "delta": "0:00:00.005348", "end": "2025-10-22 10:57:07.886536", "msg": "non-zero return code", "rc": 1, "start": "2025-10-22 10:57:07.881188", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "echo \"select open_mode from v\\\\$database;\" | sqlplus -s / as sysdba\n", "delta": "0:00:00.002961", "end": "2025-10-22 11:22:10.356795", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:22:10.353834", "stderr": "/bin/sh: sqlplus: command not found", "stderr_lines": ["/bin/sh: sqlplus: command not found"], "stdout": "", "stdout_lines": []}
 
 PLAY RECAP ************************************************************************************************************
 oracle1                    : ok=4    changed=2    unreachable=0    failed=1    skipped=7    rescued=0    ignored=2
-oracle2                    : ok=0    changed=0    unreachable=0    failed=1    skipped=2    rescued=0    ignored=0
-
-
+oracle2  
