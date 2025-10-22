@@ -1,5 +1,8 @@
 ---
-- name: Oracle Database Refresh using Pure Storage (username/password)
+# snapshot_refresh.yml
+# Oracle Database refresh using Pure Storage FlashArray (username/password)
+
+- name: Oracle DB Refresh Lab - FlashArray Snapshot + Verification
   hosts: all
   gather_facts: no
   vars_files:
@@ -7,63 +10,88 @@
 
   tasks:
 
-  # 1️⃣ Stop Oracle DB on Clone Host
+  ###########################################################
+  # 1️⃣  Stop Oracle DB on clone host (oracle2)
+  ###########################################################
   - name: Stop Oracle Database on clone host
     when: inventory_hostname == "oracle2"
     become: yes
     become_user: oracle
     script: files/stop_start_oracle.sh stop
 
-  # 2️⃣ Log in to Pure Array (creates local CLI config)
-  - name: Log in to Pure array with username/password
+  ###########################################################
+  # 2️⃣  Insert verification record into source DB (oracle1)
+  ###########################################################
+  - name: Insert verification record into source database
+    when: inventory_hostname == "localhost"
+    delegate_to: oracle1
+    become: yes
+    become_user: oracle
+    shell: |
+      . {{ oracle_env_file }}
+      sqlplus -s / as sysdba <<EOF
+      create table refresh_check (check_time date);
+      insert into refresh_check values (sysdate);
+      commit;
+      exit;
+      EOF
+
+  ###########################################################
+  # 3️⃣  Log in to Pure array with username/password
+  ###########################################################
+  - name: Log in to Pure array
     when: inventory_hostname == "localhost"
     shell: |
       echo "{{ pure_password }}" | pureadmin create --username {{ pure_username }} --array {{ pure_array_hostname }}
     register: login_result
     changed_when: "'Created configuration' in login_result.stdout or 'already exists' in login_result.stdout"
 
-  - name: Confirm Pure array login
-    when: inventory_hostname == "localhost"
-    debug:
+  - debug:
       msg: "{{ login_result.stdout_lines }}"
+    when: inventory_hostname == "localhost"
 
-  # 3️⃣ Create snapshot of source protection group
+  ###########################################################
+  # 4️⃣  Create snapshot of source protection group
+  ###########################################################
   - name: Create snapshot of source protection group
     when: inventory_hostname == "localhost"
     command: purepgroup snap {{ source_pgroup }}
     register: snap_result
 
-  - name: Display snapshot creation result
-    when: inventory_hostname == "localhost"
-    debug:
+  - debug:
       var: snap_result.stdout_lines
+    when: inventory_hostname == "localhost"
 
-  # 4️⃣ Identify latest snapshot name
+  ###########################################################
+  # 5️⃣  Identify latest snapshot name
+  ###########################################################
   - name: Get latest snapshot name
     when: inventory_hostname == "localhost"
     shell: |
       purepgroup list --snap {{ source_pgroup }} --sort "created:-" --limit 1 --csv | tail -n 1 | cut -d, -f1
     register: latest_snapshot_name
 
-  - name: Show latest snapshot
-    when: inventory_hostname == "localhost"
-    debug:
+  - debug:
       msg: "Latest snapshot: {{ latest_snapshot_name.stdout.strip() }}"
+    when: inventory_hostname == "localhost"
 
-  # 5️⃣ Get clone volumes
+  ###########################################################
+  # 6️⃣  Get clone volumes list
+  ###########################################################
   - name: List clone volumes
     when: inventory_hostname == "localhost"
     shell: |
       purepgroup list {{ clone_pgroup }} --volumes --csv | tail -n +2 | cut -d, -f1
     register: clone_volumes
 
-  - name: Display clone volumes
-    when: inventory_hostname == "localhost"
-    debug:
+  - debug:
       var: clone_volumes.stdout_lines
+    when: inventory_hostname == "localhost"
 
-  # 6️⃣ Overwrite clone volumes with snapshot volumes
-  - name: Perform overwrite for each clone volume
+  ###########################################################
+  # 7️⃣  Overwrite clone volumes from snapshot volumes
+  ###########################################################
+  - name: Overwrite each clone volume with snapshot data
     when: inventory_hostname == "localhost"
     loop: "{{ clone_volumes.stdout_lines }}"
     loop_control:
@@ -73,30 +101,44 @@
     register: overwrite_result
     ignore_errors: yes
 
-  - name: Show overwrite results
-    when: inventory_hostname == "localhost"
-    debug:
+  - debug:
       var: overwrite_result.results
+    when: inventory_hostname == "localhost"
 
-  # 7️⃣ Start Oracle DB on Clone Host
+  ###########################################################
+  # 8️⃣  Start Oracle DB on clone host
+  ###########################################################
   - name: Start Oracle Database on clone host
     when: inventory_hostname == "oracle2"
     become: yes
     become_user: oracle
     script: files/stop_start_oracle.sh start
 
-  # 8️⃣ Verify Database is Open
-  - name: Check Oracle DB status
-    when: inventory_hostname == "oracle2"
+  ###########################################################
+  # 9️⃣  Verify record exists in refreshed clone database
+  ###########################################################
+  - name: Verify verification record exists in clone DB
+    when: inventory_hostname == "localhost"
+    delegate_to: oracle2
     become: yes
     become_user: oracle
     shell: |
       . {{ oracle_env_file }}
-      echo "select open_mode from v\$database;" | sqlplus -s / as sysdba
-    register: db_status
+      sqlplus -s / as sysdba <<EOF
+      select to_char(check_time,'YYYY-MM-DD HH24:MI:SS') from refresh_check;
+      exit;
+      EOF
+    register: verification_result
+    ignore_errors: yes
 
-  - name: Show DB status
-    when: inventory_hostname == "oracle2"
+  - debug:
+      var: verification_result.stdout_lines
+    when: inventory_hostname == "localhost"
+
+  ###########################################################
+  # 🔟  Done
+  ###########################################################
+  - name: Completed Oracle Refresh
     debug:
-      msg: "{{ db_status.stdout_lines }}"
+      msg: "Oracle database refresh and verification complete."
 
