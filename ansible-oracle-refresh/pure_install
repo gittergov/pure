@@ -1,0 +1,5 @@
+cd /tmp
+curl -O https://purestorage.github.io/pure-cli/releases/latest/pure_7.0.0_linux_amd64.tar.gz
+tar -xvzf pure_7.0.0_linux_amd64.tar.gz
+sudo mv pure /usr/local/bin/
+pure --version
