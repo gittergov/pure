@@ -1,13 +1,12 @@
 #!/bin/bash
 # stop_start_oracle.sh
-# Usage: ./stop_start_oracle.sh [start|stop]
 
-ACTION=$1
-ORACLE_SID=${ORACLE_SID:-orcl}
-ORACLE_HOME=${ORACLE_HOME:-/u01/app/oracle/product/19c/dbhome_1}
-export ORACLE_SID ORACLE_HOME PATH=$ORACLE_HOME/bin:$PATH
+export ORACLE_SID=orcl
+export ORAENV_ASK=NO
+. /u01/app/oracle/product/19c/dbhome_1/bin/oraenv >/dev/null 2>&1
 
 LOGFILE=/tmp/oracle_refresh.log
+ACTION=$1
 
 stop_db() {
   echo "[$(date)] Stopping Oracle instance $ORACLE_SID..." | tee -a $LOGFILE
@@ -26,7 +25,7 @@ EOF
 }
 
 case "$ACTION" in
-  stop)  stop_db ;;
+  stop) stop_db ;;
   start) start_db ;;
   *) echo "Usage: $0 {start|stop}" ;;
 esac
