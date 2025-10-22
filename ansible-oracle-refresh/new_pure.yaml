@@ -1,180 +1,151 @@
 ---
-# Oracle Database Refresh Lab Automation
-# This playbook provides a menu-driven interface to run the lab scripts
+# Simple Oracle Refresh Playbook - Using Existing Lab Scripts
+# This playbook just runs the existing scripts in the correct order
 
-- name: Oracle Pure Storage Database Refresh Lab Automation
-  hosts: oracle2
-  become: yes
-  become_user: oracle
+- name: Oracle Database Refresh using Lab Scripts
+  hosts: localhost
   gather_facts: no
   
   vars:
+    # Lab script directory
     script_dir: /home/oracle/lab/lab1/bash
-    oracle_home: /u01/app/oracle/product/19.0.0/dbhome_1
-    grid_home: /u01/app/19.0.0/grid
-    oracle_sid: orcl
+    
+    # Environment variables needed by the scripts
+    env_vars:
+      ORACLE_HOME: /u01/app/oracle/product/19.0.0/dbhome_1
+      GRID_HOME: /u01/app/19.0.0/grid
+      ORACLE_SID: orcl
+      PATH: /u01/app/oracle/product/19.0.0/dbhome_1/bin:/u01/app/19.0.0/grid/bin:/usr/local/bin:/usr/bin:/bin
     
   tasks:
-    - name: Check available scripts
-      find:
-        paths: "{{ script_dir }}"
-        patterns: "*.sh"
-      register: lab_scripts
+    - name: Check if running as oracle user
+      shell: whoami
+      register: current_user
       
-    - name: Display available lab scripts
-      debug:
-        msg:
-          - "=== Available Lab Scripts ==="
-          - "{% for script in lab_scripts.files %}{{ script.path | basename }}{% if not loop.last %}, {% endif %}{% endfor %}"
-          
-    - name: Choose execution mode
-      pause:
-        prompt: |
-          
-          Choose execution mode:
-          1. Run complete refresh (refresh.sh)
-          2. Run step by step
-          3. Run individual script
-          
-          Enter choice (1-3)
-      register: execution_mode
-      
-    - name: Execute based on choice
-      include_tasks: "{{ execution_task }}"
-      vars:
-        execution_task: >-
-          {%- if execution_mode.user_input == '1' -%}
-          run_complete_refresh.yml
-          {%- elif execution_mode.user_input == '2' -%}
-          run_step_by_step.yml
-          {%- elif execution_mode.user_input == '3' -%}
-          run_individual_script.yml
-          {%- else -%}
-          invalid_choice.yml
-          {%- endif -%}
-
----
-# run_complete_refresh.yml
-- name: Run complete refresh script
-  shell: |
-    cd {{ script_dir }}
-    ./refresh.sh
-  register: refresh_output
-  environment:
-    ORACLE_HOME: "{{ oracle_home }}"
-    GRID_HOME: "{{ grid_home }}"
-    ORACLE_SID: "{{ oracle_sid }}"
-    PATH: "{{ oracle_home }}/bin:{{ grid_home }}/bin:{{ ansible_env.PATH }}"
+    - name: Ensure running as oracle user
+      fail:
+        msg: "This playbook must be run as oracle user. Current user: {{ current_user.stdout }}"
+      when: current_user.stdout != "oracle"
     
-- name: Display output
-  debug:
-    msg: "{{ refresh_output.stdout_lines }}"
-
----
-# run_step_by_step.yml
-- name: Run refresh step by step
-  include_tasks: execute_script.yml
-  vars:
-    script_name: "{{ item }}"
-    script_env: "{{ env_mapping[item] | default({}) }}"
-  loop:
-    - insert_demo_rec.sh
-    - shutdown.sh
-    - dismount_asm.sh
-    - pure_snap.sh
-    - mount_asm.sh
-    - startup.sh
-    - show_demo_rec.sh
-  vars:
-    env_mapping:
-      insert_demo_rec.sh:
-        ORACLE_HOME: "{{ oracle_home }}"
-        ORACLE_SID: "{{ oracle_sid }}"
-      shutdown.sh:
-        ORACLE_HOME: "{{ oracle_home }}"
-        ORACLE_SID: "{{ oracle_sid }}"
-      dismount_asm.sh:
-        ORACLE_HOME: "{{ grid_home }}"
-        ORACLE_SID: "+ASM"
-      mount_asm.sh:
-        ORACLE_HOME: "{{ grid_home }}"
-        ORACLE_SID: "+ASM"
-      startup.sh:
-        ORACLE_HOME: "{{ oracle_home }}"
-        ORACLE_SID: "{{ oracle_sid }}"
-      show_demo_rec.sh:
-        ORACLE_HOME: "{{ oracle_home }}"
-        ORACLE_SID: "{{ oracle_sid }}"
-
----
-# execute_script.yml
-- name: Execute script {{ script_name }}
-  block:
-    - name: Confirm execution of {{ script_name }}
-      pause:
-        prompt: "Press Enter to execute {{ script_name }} (or Ctrl+C to abort)"
-        
-    - name: Run {{ script_name }}
+    - name: Check if script directory exists
+      stat:
+        path: "{{ script_dir }}"
+      register: dir_check
+      
+    - name: Fail if script directory not found
+      fail:
+        msg: "Script directory {{ script_dir }} not found!"
+      when: not dir_check.stat.exists
+    
+    - name: Step 1 - Insert demo record in source database
       shell: |
         cd {{ script_dir }}
-        ./{{ script_name }}
-      register: script_output
-      environment: "{{ script_env | combine({'PATH': oracle_home + '/bin:' + grid_home + '/bin:' + ansible_env.PATH}) }}"
+        ./insert_demo_rec.sh
+      environment: "{{ env_vars }}"
+      register: step1
       
-    - name: Display output of {{ script_name }}
+    - name: Show Step 1 output
       debug:
-        msg: "{{ script_output.stdout_lines }}"
-        
-    - name: Check if script succeeded
-      debug:
-        msg: "✓ {{ script_name }} completed successfully"
-      when: script_output.rc == 0
-      
-    - name: Script failed
-      fail:
-        msg: "✗ {{ script_name }} failed with return code {{ script_output.rc }}"
-      when: script_output.rc != 0
-
----
-# run_individual_script.yml  
-- name: List available scripts
-  debug:
-    msg: "{{ lab_scripts.files | map(attribute='path') | map('basename') | list | to_nice_yaml }}"
+        msg: "{{ step1.stdout_lines }}"
     
-- name: Choose script to run
-  pause:
-    prompt: "Enter the script name to run (e.g., show_demo_rec.sh)"
-  register: chosen_script
-  
-- name: Check if script exists
-  stat:
-    path: "{{ script_dir }}/{{ chosen_script.user_input }}"
-  register: script_check
-  
-- name: Run chosen script
-  shell: |
-    cd {{ script_dir }}
-    ./{{ chosen_script.user_input }}
-  register: individual_output
-  environment:
-    ORACLE_HOME: "{{ oracle_home }}"
-    GRID_HOME: "{{ grid_home }}"
-    ORACLE_SID: "{{ oracle_sid }}"
-    PATH: "{{ oracle_home }}/bin:{{ grid_home }}/bin:{{ ansible_env.PATH }}"
-  when: script_check.stat.exists
-  
-- name: Display output
-  debug:
-    msg: "{{ individual_output.stdout_lines }}"
-  when: script_check.stat.exists
-  
-- name: Script not found
-  fail:
-    msg: "Script {{ chosen_script.user_input }} not found in {{ script_dir }}"
-  when: not script_check.stat.exists
+    - name: Step 2 - Shutdown clone database
+      shell: |
+        cd {{ script_dir }}
+        ./shutdown.sh
+      environment: "{{ env_vars }}"
+      register: step2
+      
+    - name: Show Step 2 output
+      debug:
+        msg: "{{ step2.stdout_lines }}"
+    
+    - name: Step 3 - Dismount ASM disk groups
+      shell: |
+        cd {{ script_dir }}
+        ./dismount_asm.sh
+      environment: "{{ env_vars | combine({'ORACLE_SID': '+ASM'}) }}"
+      register: step3
+      
+    - name: Show Step 3 output
+      debug:
+        msg: "{{ step3.stdout_lines }}"
+    
+    - name: Step 4 & 5 - Create snapshot and copy volumes
+      shell: |
+        cd {{ script_dir }}
+        ./pure_snap.sh
+      environment: "{{ env_vars }}"
+      register: step4_5
+      
+    - name: Show Step 4 & 5 output
+      debug:
+        msg: "{{ step4_5.stdout_lines }}"
+    
+    - name: Step 6 - Mount ASM disk groups
+      shell: |
+        cd {{ script_dir }}
+        ./mount_asm.sh
+      environment: "{{ env_vars | combine({'ORACLE_SID': '+ASM'}) }}"
+      register: step6
+      
+    - name: Show Step 6 output
+      debug:
+        msg: "{{ step6.stdout_lines }}"
+    
+    - name: Step 7 - Startup clone database
+      shell: |
+        cd {{ script_dir }}
+        ./startup.sh
+      environment: "{{ env_vars }}"
+      register: step7
+      
+    - name: Show Step 7 output
+      debug:
+        msg: "{{ step7.stdout_lines }}"
+    
+    - name: Step 8 - Verify the refresh
+      shell: |
+        cd {{ script_dir }}
+        ./show_demo_rec.sh
+      environment: "{{ env_vars }}"
+      register: step8
+      
+    - name: Show Step 8 output
+      debug:
+        msg: "{{ step8.stdout_lines }}"
+    
+    - name: Refresh Complete
+      debug:
+        msg:
+          - "======================================"
+          - "Database Refresh Completed Successfully!"
+          - "======================================"
+          - "The clone database on Oracle2 has been refreshed from Oracle1"
+          - "Verification record was found in the cloned database"
 
+# Alternative - Just run refresh.sh
 ---
-# invalid_choice.yml
-- name: Invalid choice
-  fail:
-    msg: "Invalid choice: {{ execution_mode.user_input }}. Please run the playbook again and choose 1, 2, or 3."
+- name: Run Complete Refresh Script
+  hosts: localhost
+  gather_facts: no
+  become: yes
+  become_user: oracle
+  
+  vars:
+    script_dir: /home/oracle/lab/lab1/bash
+    
+  tasks:
+    - name: Run refresh.sh
+      shell: |
+        cd {{ script_dir }}
+        ./refresh.sh
+      environment:
+        ORACLE_HOME: /u01/app/oracle/product/19.0.0/dbhome_1
+        GRID_HOME: /u01/app/19.0.0/grid
+        ORACLE_SID: orcl
+        PATH: /u01/app/oracle/product/19.0.0/dbhome_1/bin:/u01/app/19.0.0/grid/bin:{{ ansible_env.PATH }}
+      register: refresh_output
+      
+    - name: Show refresh output
+      debug:
+        msg: "{{ refresh_output.stdout_lines }}"
