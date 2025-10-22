@@ -1,9 +1,5 @@
 pure_array_hostname: flasharray1
-pure_username: pureuser
-pure_password: "pureuser"
-
-source_pgroup: Oracle1-PG
-clone_pgroup: Oracle2-PG
-
-oracle_env_file: /home/oracle/.bash_profile
+pure_api_token: "92780b77-e698-1675-7ba6-34896d40b422"
+source_pgroup: pgroup_orcl_source
+clone_pgroup: pgroup_orcl_clone
 
