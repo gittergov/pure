@@ -1,8 +1,7 @@
 ---
-# snapshot_refresh.yml
-# Oracle Database refresh using Pure Storage FlashArray (username/password)
+# Oracle Database Refresh Lab – Pure Storage FlashArray (No DB stop/start)
 
-- name: Oracle DB Refresh Lab - FlashArray Snapshot + Verification
+- name: Oracle DB Refresh Automation - FlashArray Only
   hosts: all
   gather_facts: no
   vars_files:
@@ -10,20 +9,10 @@
 
   tasks:
 
-  ###########################################################
-  # 1️⃣  Stop Oracle DB on clone host (oracle2)
-  ###########################################################
-  - name: Stop Oracle Database on clone host
-    when: inventory_hostname == "oracle2"
-    become: yes
-    become_user: oracle
-    script: files/stop_start_oracle.sh stop
-
-  ###########################################################
-  # 2️⃣  Insert verification record into source DB (oracle1)
-  ###########################################################
-  - name: Insert verification record into source database
-    when: inventory_hostname == "localhost"
+  ##############################################################
+  # 1️⃣ Insert verification record into the Source DB (optional)
+  ##############################################################
+  - name: Insert verification record into Source DB
     delegate_to: oracle1
     become: yes
     become_user: oracle
@@ -36,63 +25,62 @@
       exit;
       EOF
 
-  ###########################################################
-  # 3️⃣  Log in to Pure array with username/password
-  ###########################################################
-  - name: Log in to Pure array
-    when: inventory_hostname == "localhost"
+  ##############################################################
+  # 2️⃣ Log in to the FlashArray using username/password
+  ##############################################################
+  - name: Login to FlashArray
+    delegate_to: localhost
     shell: |
       echo "{{ pure_password }}" | pureadmin create --username {{ pure_username }} --array {{ pure_array_hostname }}
     register: login_result
     changed_when: "'Created configuration' in login_result.stdout or 'already exists' in login_result.stdout"
 
-  - debug:
-      msg: "{{ login_result.stdout_lines }}"
-    when: inventory_hostname == "localhost"
+  - name: Confirm FlashArray login
+    delegate_to: localhost
+    debug:
+      var: login_result.stdout_lines
 
-  ###########################################################
-  # 4️⃣  Create snapshot of source protection group
-  ###########################################################
-  - name: Create snapshot of source protection group
-    when: inventory_hostname == "localhost"
+  ##############################################################
+  # 3️⃣ Create a snapshot of the Source Protection Group
+  ##############################################################
+  - name: Create snapshot of Source Protection Group
+    delegate_to: localhost
     command: purepgroup snap {{ source_pgroup }}
     register: snap_result
 
   - debug:
       var: snap_result.stdout_lines
-    when: inventory_hostname == "localhost"
+    delegate_to: localhost
 
-  ###########################################################
-  # 5️⃣  Identify latest snapshot name
-  ###########################################################
+  ##############################################################
+  # 4️⃣ Identify latest snapshot name
+  ##############################################################
   - name: Get latest snapshot name
-    when: inventory_hostname == "localhost"
+    delegate_to: localhost
     shell: |
       purepgroup list --snap {{ source_pgroup }} --sort "created:-" --limit 1 --csv | tail -n 1 | cut -d, -f1
     register: latest_snapshot_name
 
   - debug:
       msg: "Latest snapshot: {{ latest_snapshot_name.stdout.strip() }}"
-    when: inventory_hostname == "localhost"
+    delegate_to: localhost
 
-  ###########################################################
-  # 6️⃣  Get clone volumes list
-  ###########################################################
-  - name: List clone volumes
-    when: inventory_hostname == "localhost"
+  ##############################################################
+  # 5️⃣ Overwrite Clone Volumes from Snapshot
+  ##############################################################
+  - name: Get list of Clone volumes
+    delegate_to: localhost
     shell: |
       purepgroup list {{ clone_pgroup }} --volumes --csv | tail -n +2 | cut -d, -f1
     register: clone_volumes
 
-  - debug:
+  - name: Display Clone Volumes
+    delegate_to: localhost
+    debug:
       var: clone_volumes.stdout_lines
-    when: inventory_hostname == "localhost"
 
-  ###########################################################
-  # 7️⃣  Overwrite clone volumes from snapshot volumes
-  ###########################################################
-  - name: Overwrite each clone volume with snapshot data
-    when: inventory_hostname == "localhost"
+  - name: Overwrite Clone Volumes from Snapshot
+    delegate_to: localhost
     loop: "{{ clone_volumes.stdout_lines }}"
     loop_control:
       loop_var: clone_vol
@@ -101,44 +89,40 @@
     register: overwrite_result
     ignore_errors: yes
 
-  - debug:
+  - name: Show overwrite results
+    delegate_to: localhost
+    debug:
       var: overwrite_result.results
-    when: inventory_hostname == "localhost"
 
-  ###########################################################
-  # 8️⃣  Start Oracle DB on clone host
-  ###########################################################
-  - name: Start Oracle Database on clone host
-    when: inventory_hostname == "oracle2"
-    become: yes
-    become_user: oracle
-    script: files/stop_start_oracle.sh start
-
-  ###########################################################
-  # 9️⃣  Verify record exists in refreshed clone database
-  ###########################################################
-  - name: Verify verification record exists in clone DB
-    when: inventory_hostname == "localhost"
+  ##############################################################
+  # 6️⃣ Mount ASM and verify Clone DB (manual or via existing scripts)
+  ##############################################################
+  - name: Run mount_asm.sh script
     delegate_to: oracle2
     become: yes
     become_user: oracle
     shell: |
-      . {{ oracle_env_file }}
-      sqlplus -s / as sysdba <<EOF
-      select to_char(check_time,'YYYY-MM-DD HH24:MI:SS') from refresh_check;
-      exit;
-      EOF
-    register: verification_result
-    ignore_errors: yes
+      cd /home/oracle/lab/lab1/bash
+      ./mount_asm.sh
 
-  - debug:
-      var: verification_result.stdout_lines
-    when: inventory_hostname == "localhost"
+  - name: Verify Clone DB record using show_demo_rec.sh
+    delegate_to: oracle2
+    become: yes
+    become_user: oracle
+    shell: |
+      cd /home/oracle/lab/lab1/bash
+      ./show_demo_rec.sh
+    register: verify_result
 
-  ###########################################################
-  # 🔟  Done
-  ###########################################################
-  - name: Completed Oracle Refresh
+  - name: Show verification result
+    delegate_to: oracle2
     debug:
-      msg: "Oracle database refresh and verification complete."
+      var: verify_result.stdout_lines
+
+  ##############################################################
+  # ✅ Done
+  ##############################################################
+  - name: Refresh Completed
+    debug:
+      msg: "Snapshot and volume overwrite completed successfully. Please start Oracle DB manually on clone host and verify record."
 

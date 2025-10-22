@@ -1,8 +1,9 @@
-# group_vars/all/vault.yml (encrypted)
 pure_array_hostname: flasharray1
 pure_username: pureuser
 pure_password: "pureuser"
 
-source_pgroup: pgroup_orcl_source
-clone_pgroup: pgroup_orcl_clone
+source_pgroup: Oracle1-PG
+clone_pgroup: Oracle2-PG
+
+oracle_env_file: /home/oracle/.bash_profile
 
