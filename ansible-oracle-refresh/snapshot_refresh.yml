@@ -1,211 +1,105 @@
 ---
-# Oracle Database Refresh Lab – Pure Storage FlashArray1
-# Automates all lab steps described in "The Lab environment is setup as follows"
-# Source DB host: oracle2
-# Clone/Target DB host: oracle1
+# Oracle Database Refresh Lab – Single Host Automation (oracle2)
+# All refresh steps are executed locally on oracle2 using the lab scripts.
 
-- name: Oracle DB Refresh Automation – Full Lab Workflow
-  hosts:
-    - oracle1
-    - oracle2
+- name: Oracle DB Refresh Automation – Run all scripts on oracle2
+  hosts: oracle2
   gather_facts: no
-  vars_files:
-    - group_vars/all/vault.yml
 
   vars:
     oracle_user: oracle
     lab_script_path: /home/oracle/lab/lab1/bash
-    log_file: /tmp/oracle_refresh.log
 
+  tasks:
   ##########################################################################
-  # 1️⃣ STARTUP CLONE DATABASE (if required)
-  ##########################################################################
-  - name: Ensure Clone DB is started (if needed)
-    when: inventory_hostname == "oracle1"
-    become: yes
-    become_user: "{{ oracle_user }}"
-    shell: |
-      . /home/oracle/.bash_profile
-      sqlplus -s / as sysdba <<EOF
-      startup;
-      exit;
-      EOF
-    register: startup_clone
-    ignore_errors: yes
-
-  - debug:
-      var: startup_clone.stdout_lines
-    when: inventory_hostname == "oracle1"
-
-  ##########################################################################
-  # 2️⃣ INSERT DEMO RECORD INTO SOURCE DATABASE
+  # 1️⃣ Insert demo record in Source DB (handled remotely inside script)
   ##########################################################################
   - name: Insert verification record in Source DB
-    when: inventory_hostname == "oracle2"
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
       cd {{ lab_script_path }}
       ./insert_demo_rec.sh
     register: insert_result
-    ignore_errors: yes
 
   - debug:
       var: insert_result.stdout_lines
-    when: inventory_hostname == "oracle2"
 
   ##########################################################################
-  # 3️⃣ SHUTDOWN THE CLONE DATABASE
+  # 2️⃣ Shutdown Clone DB
   ##########################################################################
-  - name: Stop Clone DB using shutdown.sh
-    when: inventory_hostname == "oracle1"
+  - name: Stop Clone DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
       cd {{ lab_script_path }}
       ./shutdown.sh
-    register: stop_clone
-    ignore_errors: yes
+    register: shutdown_result
 
   - debug:
-      var: stop_clone.stdout_lines
-    when: inventory_hostname == "oracle1"
+      var: shutdown_result.stdout_lines
 
   ##########################################################################
-  # 4️⃣ DISMOUNT ASM DISK GROUPS ON CLONE HOST
+  # 3️⃣ Dismount ASM Disk Groups
   ##########################################################################
   - name: Dismount ASM disk groups
-    when: inventory_hostname == "oracle1"
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
       cd {{ lab_script_path }}
       ./dismount_asm.sh
     register: dismount_result
-    ignore_errors: yes
 
   - debug:
       var: dismount_result.stdout_lines
-    when: inventory_hostname == "oracle1"
 
   ##########################################################################
-  # 5️⃣ CREATE SNAPSHOT OF SOURCE PROTECTION GROUP
+  # 4️⃣ Take Snapshot and Overwrite Clone (pure_snap.sh)
   ##########################################################################
-  - name: Create snapshot of Source Protection Group
-    when: inventory_hostname == "oracle2"
+  - name: Take snapshot and refresh clone using pure_snap.sh
+    become: yes
+    become_user: "{{ oracle_user }}"
     shell: |
-      purepgroup snap {{ source_pgroup }}
-    environment:
-      PUREARRAY: "{{ pure_array_hostname }}"
-      PURETOKEN: "{{ pure_api_token }}"
-    register: snap_create
-    changed_when: "'Created' in snap_create.stdout or 'created' in snap_create.stderr"
-    ignore_errors: yes
+      cd {{ lab_script_path }}
+      ./pure_snap.sh
+    register: snap_refresh_result
 
   - debug:
-      var: snap_create.stdout_lines
-    when: inventory_hostname == "oracle2"
+      var: snap_refresh_result.stdout_lines
 
   ##########################################################################
-  # 6️⃣ IDENTIFY LATEST SNAPSHOT
+  # 5️⃣ Mount ASM and Start Clone DB
   ##########################################################################
-  - name: Get latest snapshot name
-    when: inventory_hostname == "oracle2"
-    shell: |
-      purepgroup list --snap {{ source_pgroup }} --sort "created:-" --limit 1 --csv | tail -n 1 | cut -d, -f1
-    register: latest_snapshot_name
-    ignore_errors: yes
-
-  - debug:
-      msg: "Latest snapshot: {{ latest_snapshot_name.stdout.strip() }}"
-    when: inventory_hostname == "oracle2"
-
-  ##########################################################################
-  # 7️⃣ OVERWRITE CLONE VOLUMES USING SNAPSHOT
-  ##########################################################################
-  - name: Get clone volumes from target pgroup
-    when: inventory_hostname == "oracle2"
-    shell: |
-      purepgroup list {{ clone_pgroup }} --volumes --csv | tail -n +2 | cut -d, -f1
-    register: clone_volumes
-    ignore_errors: yes
-
-  - name: Overwrite clone volumes with latest snapshot
-    when: inventory_hostname == "oracle2"
-    loop: "{{ clone_volumes.stdout_lines }}"
-    loop_control:
-      loop_var: clone_vol
-    shell: |
-      echo "Overwriting {{ clone_vol }} from snapshot {{ latest_snapshot_name.stdout.strip() }}"
-      purevol overwrite --source {{ latest_snapshot_name.stdout.strip() }}.{{ clone_vol | basename }} {{ clone_vol }}
-    environment:
-      PUREARRAY: "{{ pure_array_hostname }}"
-      PURETOKEN: "{{ pure_api_token }}"
-    register: overwrite_result
-    ignore_errors: yes
-
-  - debug:
-      var: overwrite_result.results
-    when: inventory_hostname == "oracle2"
-
-  ##########################################################################
-  # 8️⃣ MOUNT ASM DISK GROUPS ON CLONE HOST
-  ##########################################################################
-  - name: Mount ASM disk groups
-    when: inventory_hostname == "oracle1"
+  - name: Mount ASM and start Clone DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
       cd {{ lab_script_path }}
       ./mount_asm.sh
-    register: mount_result
-    ignore_errors: yes
-
-  - debug:
-      var: mount_result.stdout_lines
-    when: inventory_hostname == "oracle1"
-
-  ##########################################################################
-  # 9️⃣ STARTUP THE CLONE DATABASE
-  ##########################################################################
-  - name: Start Clone DB using startup.sh
-    when: inventory_hostname == "oracle1"
-    become: yes
-    become_user: "{{ oracle_user }}"
-    shell: |
-      cd {{ lab_script_path }}
       ./startup.sh
-    register: start_clone
-    ignore_errors: yes
+    register: startup_result
 
   - debug:
-      var: start_clone.stdout_lines
-    when: inventory_hostname == "oracle1"
+      var: startup_result.stdout_lines
 
   ##########################################################################
-  # 🔟 VERIFY CLONE DB RECORD
+  # 6️⃣ Verify Record in Clone DB
   ##########################################################################
-  - name: Verify clone DB record using show_demo_rec.sh
-    when: inventory_hostname == "oracle1"
+  - name: Verify record in refreshed Clone DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
       cd {{ lab_script_path }}
       ./show_demo_rec.sh
     register: verify_result
-    ignore_errors: yes
 
   - debug:
       var: verify_result.stdout_lines
-    when: inventory_hostname == "oracle1"
 
   ##########################################################################
-  # ✅ COMPLETION
+  # ✅ Done
   ##########################################################################
-  - name: Refresh completed
+  - name: Refresh Completed
     debug:
-      msg: |
-        Oracle DB Refresh complete.
-        Snapshot, overwrite, and clone DB startup verified successfully.
-:1
+      msg: "Oracle Refresh completed successfully on oracle2 using local lab scripts."
 
