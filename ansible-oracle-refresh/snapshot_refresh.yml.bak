@@ -18,7 +18,6 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      . /home/oracle/lab/lab1/bash/env_oracle.sh
       cd {{ lab_script_path }}
       ./insert_demo_rec.sh
     register: insert_result
@@ -26,16 +25,14 @@
   - debug:
       var: insert_result.stdout_lines
 
- ##########################################################################
+  ##########################################################################
   # 2️⃣ Shutdown Clone DB
   ##########################################################################
   - name: Stop Clone DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      . /home/oracle/lab/lab1/bash/env_oracle.sh
       cd {{ lab_script_path }}
-      ./startup.sh
       ./shutdown.sh
     register: shutdown_result
 
@@ -49,7 +46,6 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      . /home/oracle/lab/lab1/bash/env_oracle.sh
       cd {{ lab_script_path }}
       ./dismount_asm.sh
     register: dismount_result
@@ -64,7 +60,6 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      . /home/oracle/lab/lab1/bash/env_oracle.sh
       cd {{ lab_script_path }}
       ./pure_snap.sh
     register: snap_refresh_result
@@ -79,7 +74,6 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      . /home/oracle/lab/lab1/bash/env_oracle.sh
       cd {{ lab_script_path }}
       ./mount_asm.sh
       ./startup.sh
@@ -98,7 +92,6 @@
       cd {{ lab_script_path }}
       ./show_demo_rec.sh
     register: verify_result
-    tags: verify
 
   - debug:
       var: verify_result.stdout_lines
@@ -109,3 +102,4 @@
   - name: Refresh Completed
     debug:
       msg: "Oracle Refresh completed successfully on oracle2 using local lab scripts."
+

@@ -3,7 +3,7 @@
 # This playbook runs the existing scripts from the Pure Storage lab
 
 - name: Oracle Database Refresh using Lab Scripts
-  hosts: localhost
+  hosts: oracle2
   gather_facts: no
   
   vars:
