@@ -1,0 +1,5 @@
+git config --global credential.helper store
+git config user.name "gittergov"
+git config user.email "gvinjmauri@gmail.com"
+
+ghp_KMEmHdsDMLdeg9zxMgyyBuwIRqtEmc0fcSt
