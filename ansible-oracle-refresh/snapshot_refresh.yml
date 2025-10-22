@@ -1,5 +1,5 @@
 ---
-- name: Oracle DB Refresh Automation – FlashArray1 (Source: oracle2 → Target: oracle1)
+- name: "Oracle DB Refresh Automation - FlashArray1 (Source: oracle2 -> Target: oracle1)"
   hosts:
     - oracle2
     - oracle1
