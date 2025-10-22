@@ -1,0 +1,117 @@
+---
+# Oracle Database Refresh Lab – Single Host Automation (oracle2)
+# All steps are executed locally on oracle2 using the provided lab scripts.
+
+- name: "Oracle DB Refresh Automation – Run all scripts on oracle2"
+  hosts: oracle2
+  gather_facts: no
+
+  vars:
+    oracle_user: oracle
+    lab_script_path: /home/oracle/lab/labl/bash   # verified actual directory path
+
+  tasks:
+  ##########################################################################
+  # 1️⃣ Insert demo record in Source DB (handled remotely inside script)
+  ##########################################################################
+  - name: Insert verification record in Source DB
+    become: yes
+    become_user: "{{ oracle_user }}"
+    shell: |
+      cd {{ lab_script_path }}
+      ./insert_demo_rec.sh
+    register: insert_result
+    failed_when: insert_result.rc != 0
+    changed_when: false
+
+  - debug:
+      var: insert_result.stdout_lines
+
+  ##########################################################################
+  # 2️⃣ Shutdown Clone DB
+  ##########################################################################
+  - name: Stop Clone DB
+    become: yes
+    become_user: "{{ oracle_user }}"
+    shell: |
+      cd {{ lab_script_path }}
+      ./shutdown.sh
+    register: shutdown_result
+    failed_when: shutdown_result.rc != 0
+    changed_when: false
+
+  - debug:
+      var: shutdown_result.stdout_lines
+
+  ##########################################################################
+  # 3️⃣ Dismount ASM Disk Groups
+  ##########################################################################
+  - name: Dismount ASM disk groups
+    become: yes
+    become_user: "{{ oracle_user }}"
+    shell: |
+      cd {{ lab_script_path }}
+      ./dismount_asm.sh
+    register: dismount_result
+    failed_when: dismount_result.rc != 0
+    changed_when: false
+
+  - debug:
+      var: dismount_result.stdout_lines
+
+  ##########################################################################
+  # 4️⃣ Take Snapshot and Overwrite Clone (pure_snap.sh)
+  ##########################################################################
+  - name: Take snapshot and refresh clone using pure_snap.sh
+    become: yes
+    become_user: "{{ oracle_user }}"
+    shell: |
+      cd {{ lab_script_path }}
+      ./pure_snap.sh
+    register: snap_refresh_result
+    failed_when: snap_refresh_result.rc != 0
+    changed_when: false
+
+  - debug:
+      var: snap_refresh_result.stdout_lines
+
+  ##########################################################################
+  # 5️⃣ Mount ASM and Start Clone DB
+  ##########################################################################
+  - name: Mount ASM and start Clone DB
+    become: yes
+    become_user: "{{ oracle_user }}"
+    shell: |
+      cd {{ lab_script_path }}
+      ./mount_asm.sh
+      ./startup.sh
+    register: startup_result
+    failed_when: startup_result.rc != 0
+    changed_when: false
+
+  - debug:
+      var: startup_result.stdout_lines
+
+  ##########################################################################
+  # 6️⃣ Verify Record in Clone DB
+  ##########################################################################
+  - name: Verify record in refreshed Clone DB
+    become: yes
+    become_user: "{{ oracle_user }}"
+    shell: |
+      cd {{ lab_script_path }}
+      ./show_demo_rec.sh
+    register: verify_result
+    failed_when: verify_result.rc != 0
+    changed_when: false
+
+  - debug:
+      var: verify_result.stdout_lines
+
+  ##########################################################################
+  # ✅ Done
+  ##########################################################################
+  - name: Refresh Completed
+    debug:
+      msg: "Oracle Refresh completed successfully on oracle2 using local lab scripts."
+
