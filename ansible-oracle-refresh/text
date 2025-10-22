@@ -3,3 +3,8 @@ git config user.name "gittergov"
 git config user.email "gvinjmauri@gmail.com"
 
 ghp_KMEmHdsDMLdeg9zxMgyyBuwIRqtEmc0fcSt
+ 
+  yum install oracle-epel-release-el7
+  816  yum install ansible
+  817  yum install git
+
