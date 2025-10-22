@@ -8,28 +8,19 @@
     - group_vars/all/vault.yml
 
   vars:
-    # Variables used for Oracle environment
-    oracle_sid: orcl
-    oracle_home: /u01/app/oracle/product/19c/dbhome_1
-    oraenv_path: /u01/app/oracle/product/19c/dbhome_1/bin/oraenv
-    oraenv_ask: NO
     oracle_user: oracle
     log_file: /tmp/oracle_refresh.log
-
-  tasks:
 
   ##########################################################################
   # 1️⃣  STOP ORACLE DATABASE ON TARGET HOST (oracle1)
   ##########################################################################
+  tasks:
   - name: Stop Oracle Database on target host
     when: inventory_hostname == "oracle1"
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      export ORACLE_SID={{ oracle_sid }}
-      export ORAENV_ASK={{ oraenv_ask }}
-      . {{ oraenv_path }} >/dev/null 2>&1
-      echo "[$(date)] Stopping Oracle instance $ORACLE_SID..." | tee -a {{ log_file }}
+      echo "[$(date)] Stopping Oracle..." | tee -a {{ log_file }}
       sqlplus -s / as sysdba <<EOF
       shutdown immediate;
       exit;
@@ -110,10 +101,7 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      export ORACLE_SID={{ oracle_sid }}
-      export ORAENV_ASK={{ oraenv_ask }}
-      . {{ oraenv_path }} >/dev/null 2>&1
-      echo "[$(date)] Starting Oracle instance $ORACLE_SID..." | tee -a {{ log_file }}
+      echo "[$(date)] Starting Oracle..." | tee -a {{ log_file }}
       sqlplus -s / as sysdba <<EOF
       startup;
       exit;
@@ -134,9 +122,6 @@
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
-      export ORACLE_SID={{ oracle_sid }}
-      export ORAENV_ASK={{ oraenv_ask }}
-      . {{ oraenv_path }} >/dev/null 2>&1
       echo "select open_mode from v\\$database;" | sqlplus -s / as sysdba
     register: db_status
 
