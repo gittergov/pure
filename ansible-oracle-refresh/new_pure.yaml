@@ -1,6 +1,6 @@
 ---
-# Simple Oracle Refresh Playbook - Using Existing Lab Scripts
-# This playbook just runs the existing scripts in the correct order
+# Oracle Database Refresh using Lab Scripts
+# This playbook runs the existing scripts from the Pure Storage lab
 
 - name: Oracle Database Refresh using Lab Scripts
   hosts: localhost
@@ -22,10 +22,9 @@
       shell: whoami
       register: current_user
       
-    - name: Ensure running as oracle user
-      fail:
-        msg: "This playbook must be run as oracle user. Current user: {{ current_user.stdout }}"
-      when: current_user.stdout != "oracle"
+    - name: Display current user
+      debug:
+        msg: "Running as user: {{ current_user.stdout }}"
     
     - name: Check if script directory exists
       stat:
@@ -70,14 +69,14 @@
       debug:
         msg: "{{ step3.stdout_lines }}"
     
-    - name: Step 4 & 5 - Create snapshot and copy volumes
+    - name: Step 4 and 5 - Create snapshot and copy volumes
       shell: |
         cd {{ script_dir }}
         ./pure_snap.sh
       environment: "{{ env_vars }}"
       register: step4_5
       
-    - name: Show Step 4 & 5 output
+    - name: Show Step 4 and 5 output
       debug:
         msg: "{{ step4_5.stdout_lines }}"
     
@@ -122,30 +121,3 @@
           - "======================================"
           - "The clone database on Oracle2 has been refreshed from Oracle1"
           - "Verification record was found in the cloned database"
-
-# Alternative - Just run refresh.sh
----
-- name: Run Complete Refresh Script
-  hosts: localhost
-  gather_facts: no
-  become: yes
-  become_user: oracle
-  
-  vars:
-    script_dir: /home/oracle/lab/lab1/bash
-    
-  tasks:
-    - name: Run refresh.sh
-      shell: |
-        cd {{ script_dir }}
-        ./refresh.sh
-      environment:
-        ORACLE_HOME: /u01/app/oracle/product/19.0.0/dbhome_1
-        GRID_HOME: /u01/app/19.0.0/grid
-        ORACLE_SID: orcl
-        PATH: /u01/app/oracle/product/19.0.0/dbhome_1/bin:/u01/app/19.0.0/grid/bin:{{ ansible_env.PATH }}
-      register: refresh_output
-      
-    - name: Show refresh output
-      debug:
-        msg: "{{ refresh_output.stdout_lines }}"
