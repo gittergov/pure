@@ -1,23 +1,26 @@
-
-Some modules do not make sense in Ad-Hoc (include, meta, etc)
-ERROR! No argument passed to command module (did you mean to run ansible-playbook?)
 [root@oracle1 ansible-oracle-refresh]#  ansible-playbook snapshot_refresh.yml -i inventory.ini
 
 PLAY [Oracle DB Refresh Automation - FlashArray1 (Source: oracle2 -> Target: oracle1)] ********************************
 
 TASK [Stop Oracle Database on target host] ****************************************************************************
 skipping: [oracle2]
+
+
+
+
 [WARNING]: Platform linux on host oracle1 is using the discovered Python interpreter at /usr/bin/python, but future
 installation of another Python interpreter could change this. See
 https://docs.ansible.com/ansible/2.9/reference_appendices/interpreter_discovery.html for more information.
-fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "echo \"[$(date)] Stopping Oracle...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nshutdown immediate;\nexit;\nEOF\n", "delta": "0:00:00.005257", "end": "2025-10-22 11:36:19.675919", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:36:19.670662", "stderr": "/bin/sh: line 1: sqlplus: command not found", "stderr_lines": ["/bin/sh: line 1: sqlplus: command not found"], "stdout": "[Wed Oct 22 11:36:19 PDT 2025] Stopping Oracle...", "stdout_lines": ["[Wed Oct 22 11:36:19 PDT 2025] Stopping Oracle..."]}
-...ignoring
+changed: [oracle1]
 
 TASK [Show DB stop result] ********************************************************************************************
 skipping: [oracle2]
 ok: [oracle1] => {
     "stop_db_result.stdout_lines": [
-        "[Wed Oct 22 11:36:19 PDT 2025] Stopping Oracle..."
+        "[Wed Oct 22 11:46:34 PDT 2025] Stopping Oracle...",
+        "Database closed.",
+        "Database dismounted.",
+        "ORACLE instance shut down."
     ]
 }
 
@@ -26,7 +29,7 @@ skipping: [oracle1]
 [WARNING]: Platform linux on host oracle2 is using the discovered Python interpreter at /usr/bin/python, but future
 installation of another Python interpreter could change this. See
 https://docs.ansible.com/ansible/2.9/reference_appendices/interpreter_discovery.html for more information.
-fatal: [oracle2]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": false, "cmd": "purepgroup snap pgroup_orcl_source\n", "delta": "0:00:00.005962", "end": "2025-10-22 11:36:20.236853", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:36:20.230891", "stderr": "/bin/sh: purepgroup: command not found", "stderr_lines": ["/bin/sh: purepgroup: command not found"], "stdout": "", "stdout_lines": []}
+fatal: [oracle2]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": false, "cmd": "purepgroup snap pgroup_orcl_source\n", "delta": "0:00:00.005716", "end": "2025-10-22 11:47:11.507844", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:47:11.502128", "stderr": "/bin/sh: purepgroup: command not found", "stderr_lines": ["/bin/sh: purepgroup: command not found"], "stdout": "", "stdout_lines": []}
 
 TASK [Display snapshot creation output] *******************************************************************************
 skipping: [oracle1]
@@ -47,18 +50,19 @@ TASK [Display overwrite results] ***********************************************
 skipping: [oracle1]
 
 TASK [Start Oracle Database on target host] ***************************************************************************
-fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "echo \"[$(date)] Starting Oracle...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nstartup;\nexit;\nEOF\n", "delta": "0:00:00.010860", "end": "2025-10-22 11:36:20.823498", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:36:20.812638", "stderr": "/bin/sh: line 1: sqlplus: command not found", "stderr_lines": ["/bin/sh: line 1: sqlplus: command not found"], "stdout": "[Wed Oct 22 11:36:20 PDT 2025] Starting Oracle...", "stdout_lines": ["[Wed Oct 22 11:36:20 PDT 2025] Starting Oracle..."]}
+fatal: [oracle1]: FAILED! => {"changed": true, "cmd": "echo \"[$(date)] Starting Oracle...\" | tee -a /tmp/oracle_refresh.log\nsqlplus -s / as sysdba <<EOF\nstartup;\nexit;\nEOF\n", "delta": "0:00:00.008919", "end": "2025-10-22 11:47:12.110709", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:47:12.101790", "stderr": "/bin/sh: line 1: sqlplus: command not found", "stderr_lines": ["/bin/sh: line 1: sqlplus: command not found"], "stdout": "[Wed Oct 22 11:47:12 PDT 2025] Starting Oracle...", "stdout_lines": ["[Wed Oct 22 11:47:12 PDT 2025] Starting Oracle..."]}
 ...ignoring
 
 TASK [Show DB start result] *******************************************************************************************
 ok: [oracle1] => {
     "start_db_result.stdout_lines": [
-        "[Wed Oct 22 11:36:20 PDT 2025] Starting Oracle..."
+        "[Wed Oct 22 11:47:12 PDT 2025] Starting Oracle..."
     ]
 }
 
 TASK [Verify DB open mode] ********************************************************************************************
-fatal: [oracle1]: FAILED! => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python"}, "changed": true, "cmd": "echo \"select open_mode from v\\\\$database;\" | sqlplus -s / as sysdba\n", "delta": "0:00:00.002676", "end": "2025-10-22 11:36:21.267167", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:36:21.264491", "stderr": "/bin/sh: sqlplus: command not found", "stderr_lines": ["/bin/sh: sqlplus: command not found"], "stdout": "", "stdout_lines": []}
+fatal: [oracle1]: FAILED! => {"changed": true, "cmd": "echo \"select open_mode from v\\\\$database;\" | sqlplus -s / as sysdba\n", "delta": "0:00:00.003656", "end": "2025-10-22 11:47:12.512631", "msg": "non-zero return code", "rc": 127, "start": "2025-10-22 11:47:12.508975", "stderr": "/bin/sh: sqlplus: command not found", "stderr_lines": ["/bin/sh: sqlplus: command not found"], "stdout": "", "stdout_lines": []}
 
 PLAY RECAP ************************************************************************************************************
-oracle1 
+oracle1                    : ok=4    changed=2    unreachable=0    failed=1    skipped=7    rescued=0    ignored=1
+oracle2    
