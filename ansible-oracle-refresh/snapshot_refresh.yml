@@ -2,7 +2,7 @@
 # Oracle Database Refresh Lab – Single Host Automation (oracle2)
 # All refresh steps are executed locally on oracle2 using the lab scripts.
 
-- name: Oracle DB Refresh Automation – Run all scripts on oracle2
+- name: "Oracle DB Refresh Automation – Run all scripts on oracle2"
   hosts: oracle2
   gather_facts: no
 
@@ -12,9 +12,10 @@
 
   tasks:
   ##########################################################################
-  # 1️⃣ Insert demo record in Source DB (handled remotely inside script)
+  # 1️⃣ Insert demo record in Prod DB (handled remotely inside script)
   ##########################################################################
-  - name: Insert verification record in Source DB
+  
+  - name: Insert verification record in Prod DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
@@ -27,9 +28,10 @@
       var: insert_result.stdout_lines
 
  ##########################################################################
-  # 2️⃣ Shutdown Clone DB
+  # this is the freeze EPIC DB
+  # 2️⃣ Shutdown Prod DB
   ##########################################################################
-  - name: Stop Clone DB
+  - name: Stop Prod DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
@@ -58,9 +60,9 @@
       var: dismount_result.stdout_lines
 
   ##########################################################################
-  # 4️⃣ Take Snapshot and Overwrite Clone (pure_snap.sh)
+  # 4️⃣ Take Snapshot and Refresh Backup 
   ##########################################################################
-  - name: Take snapshot and refresh clone using pure_snap.sh
+  - name: Take snapshot and refresh Backup
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
@@ -73,9 +75,10 @@
       var: snap_refresh_result.stdout_lines
 
   ##########################################################################
-  # 5️⃣ Mount ASM and Start Clone DB
+  
+  # 5️⃣ Mount ASM and Start Backup DB
   ##########################################################################
-  - name: Mount ASM and start Clone DB
+  - name: Mount ASM and start Backup DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
@@ -89,9 +92,9 @@
       var: startup_result.stdout_lines
 
   ##########################################################################
-  # 6️⃣ Verify Record in Clone DB
+  # 6️⃣ Verify Record in Backup DB
   ##########################################################################
-  - name: Verify record in refreshed Clone DB
+  - name: Verify record in refreshed Backup DB
     become: yes
     become_user: "{{ oracle_user }}"
     shell: |
